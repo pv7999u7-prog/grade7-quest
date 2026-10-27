@@ -477,6 +477,7 @@ function afterAnswer(q, ok, correctLine) {
   let grad = false;
   if (ok) {
     r.r++; d.correct++;
+    petLearn(); // 答對也會照顧小雞（pet.js）
     sess.correct++; sess.combo++;
     sess.maxCombo = Math.max(sess.maxCombo, sess.combo);
     sess.xp += 10 + Math.min(sess.combo - 1, 5) * 2;
@@ -752,6 +753,8 @@ function buyShield() {
   if (spendable() < SHIELD_COST || S.shields >= SHIELD_MAX) return;
   if (!confirm(`用 ${SHIELD_COST} 金幣買一張連續保護卡嗎？`)) return;
   S.coins -= SHIELD_COST; S.shields++;
+  S.shieldSpent = (S.shieldSpent || 0) + SHIELD_COST;
+  const sd = ensureDay(); sd.shieldSpent = (sd.shieldSpent || 0) + SHIELD_COST;
   save();
   toast('🛡️ 獲得一張保護卡');
   shopPage();
@@ -866,6 +869,8 @@ function parentPage() {
         <button class="go-btn" onclick="parentRedeem(${i})" ${S.coins >= r.cost ? '' : 'disabled'}>兌換</button></div>`).join('')}
     </div>
 
+    ${coinFlowHtml()}
+
     <div class="card">
       <h3>近 7 天答題數</h3>
       <div class="week">${week.map(k => {
@@ -971,7 +976,7 @@ function approveRedeem(id) {
     if (!confirm(`兌換「${r.name}」，扣 ${r.cost} 金幣？`)) return;
     S.coins -= r.cost; r.paid = true;
   }
-  r.done = true;
+  r.done = true; r.doneDate = today();
   save(); toast(`已兌換「${r.name}」，剩 ${S.coins} 金幣`); parentPage();
 }
 function cancelRedeem(id) {

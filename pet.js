@@ -3,14 +3,20 @@
 // 這個檔案要在 app.js 之前載入（app.js 的 freshState 會用到 newPet）；其餘函式執行時才用到 app.js 的 S、save、toast 等
 
 // ───────── 成長階段 ─────────
+// 門檻依「每天約 40～50 成長值」（答題約 20＋摸摸頭 6＋照顧約 20）估算，大約期末考前（1 月中）長到最後一階
 const PET_STAGES = [
-  { at: 0, name: '破殼小雞', emoji: '🐣', size: 0.40 },
-  { at: 80, name: '毛茸茸小雞', emoji: '🐥', size: 0.44 },
-  { at: 200, name: '活潑小雞', emoji: '🐤', size: 0.48 },
-  { at: 400, name: '少年雞', emoji: '🐤', size: 0.54 },
-  { at: 700, name: '大公雞', emoji: '🐔', size: 0.54 },
-  { at: 1200, name: '傳說神雞', emoji: '🐓', size: 0.58 },
+  { at: 0, name: '破殼小雞', emoji: '🐣', size: 0.40, desc: '剛從蛋裡探出頭' },
+  { at: 300, name: '毛茸茸小雞', emoji: '🐥', size: 0.44, desc: '全身黃黃的絨毛' },
+  { at: 800, name: '活潑小雞', emoji: '🐤', size: 0.48, desc: '到處跑來跑去' },
+  { at: 1500, name: '少年雞', emoji: '🐔', size: 0.50, desc: '長出漂亮的羽毛' },
+  { at: 2400, name: '大公雞', emoji: '🐓', size: 0.54, desc: '每天早上喔喔叫' },
+  { at: 3400, name: '傳說神鳥', emoji: '🦚', size: 0.58, desc: '展開閃亮的尾羽！' },
 ];
+const PET_GOAL = { date: '2027-01-15', label: '期末考前' }; // 養成目標日（顯示用）
+
+// ───────── 答題也會照顧小雞 ─────────
+// 每答對 1 題：飽足、心情、清潔各 +3（只補到 60，想更高要花金幣照顧），成長 +1
+const PET_LEARN = { per: 3, floor: 60, grow: 1 };
 
 // ───────── 照顧（每項 20～50 金幣）─────────
 // food 飽足、happy 心情、clean 清潔、grow 成長值
@@ -181,12 +187,87 @@ function petPage() {
         <div style="margin-top:10px">
           ${bar('🍗', '飽足', p.food, '#f5a524')}${bar('😊', '心情', p.happy, '#ec6aa0')}${bar('🫧', '清潔', p.clean, '#3fa7e0')}
         </div>
-        <div class="small muted" style="margin-top:6px">點小雞可以免費摸摸頭（今天還有 ${Math.max(0, PET_PATS_PER_DAY - pats)} 次）。肚子太餓時長得比較慢喔！</div>
+        <div class="small muted" style="margin-top:6px">點小雞可以免費摸摸頭（今天還有 ${Math.max(0, PET_PATS_PER_DAY - pats)} 次）。
+          每答對 1 題，小雞成長 +${PET_LEARN.grow}，飽足、心情、清潔也會補一點（最多到 ${PET_LEARN.floor}）。肚子太餓時長得比較慢喔！</div>
+        ${S.petDailyLimit ? `<div class="small muted">爸媽設定：每天最多花 ${S.petDailyLimit} 金幣在小雞身上（今天已花 ${ensureDay().petSpent || 0}）</div>` : ''}
       </div>
     </div>
+    ${petRoadmapHtml()}
     <div class="pet-tabs">${tabs.map(([k, label]) => `<button class="${petTab === k ? 'on' : ''}" onclick="petTab='${k}';petPage()">${label}</button>`).join('')}</div>
     <div class="card">${petTab === 'care' ? petCareHtml(free) : petShopHtml(petTab, free)}</div>`;
 }
+// 成長路線圖：讓孩子先看到之後會變成什麼樣子
+function petRoadmapHtml() {
+  const p = S.pet;
+  const si = petStage(p);
+  const color = PET_ITEM[p.equip.color] || {};
+  const last = PET_STAGES[PET_STAGES.length - 1];
+  // 用最近 7 天的平均成長速度估計還要幾天
+  const t = today();
+  const recent = Array.from({ length: 7 }, (_, i) => S.days[addDays(t, -i)]?.petGrow || 0);
+  const active = recent.filter(v => v > 0).length;
+  const perDay = active ? recent.reduce((a, b) => a + b, 0) / active : 0; // 只平均有玩的天數
+  const left = Math.max(0, last.at - p.grow);
+  let eta = '';
+  if (si === PET_STAGES.length - 1) eta = `🎉 已經養成「${last.name}」了，太厲害了！`;
+  else if (perDay > 0) {
+    const days = Math.ceil(left / perDay);
+    const when = addDays(t, days);
+    eta = `照最近的速度（每天約 ${Math.round(perDay)}），大約 <b>${days} 天後（${shortDate(when)}）</b>變成「${last.name}」` +
+      (when <= PET_GOAL.date ? '，趕得上目標！💪' : `，要再加油才趕得上 ${shortDate(PET_GOAL.date)} 喔！`);
+  } else eta = '開始答題、照顧小雞，就能算出還要多久長大！';
+  return `
+    <div class="card">
+      <div class="row between wrap"><h3>🗺️ 成長路線圖</h3><span class="small muted">目標：${PET_GOAL.label}（${shortDate(PET_GOAL.date)}）養成「${last.name}」</span></div>
+      <div class="pet-road">${PET_STAGES.map((st, i) => {
+        const state = i < si ? 'done' : i === si ? 'now' : 'next';
+        return `<div class="road-step ${state}">
+          <span class="road-emoji ${i <= si ? (color.cls || '') : ''}" style="${i <= si && color.filter ? `filter:${color.filter}` : ''}">${st.emoji}</span>
+          <b>${st.name}</b><span class="small muted">${st.desc}</span>
+          <span class="road-tag">${state === 'done' ? '✓ 完成' : state === 'now' ? '現在' : `還差 ${st.at - p.grow}`}</span>
+        </div>`;
+      }).join('<span class="road-arrow">➜</span>')}</div>
+      <div class="xpbar" style="margin-top:12px"><div style="width:${Math.min(100, p.grow / last.at * 100).toFixed(1)}%;background:var(--ok)"></div></div>
+      <div class="small" style="margin-top:6px">總成長 ${p.grow} / ${last.at}。${eta}</div>
+    </div>`;
+}
+
+// ───────── 家長頁：金幣去向與小雞花費上限 ─────────
+function coinFlowHtml() {
+  const t = today();
+  const week = Array.from({ length: 7 }, (_, i) => addDays(t, i - 6));
+  const sum = key => week.reduce((a, k) => a + ((S.days[k] || {})[key] || 0), 0);
+  const doneIn = r => r.done && week.includes(r.doneDate || r.date);
+  const rewardWeek = S.redeems.filter(doneIn).reduce((a, r) => a + r.cost, 0);
+  const rewardAll = S.redeems.filter(r => r.done).reduce((a, r) => a + r.cost, 0);
+  return `
+    <div class="card">
+      <h3>🪙 金幣去向</h3>
+      <table>
+        <tr><th></th><th class="num">今天</th><th class="num">近 7 天</th><th class="num">累計</th></tr>
+        <tr><td>賺到的金幣</td><td class="num">${ensureDay().earned || 0}</td><td class="num">${sum('earned')}</td><td class="num">—</td></tr>
+        <tr><td>🐣 花在小雞</td><td class="num">${ensureDay().petSpent || 0}</td><td class="num">${sum('petSpent')}</td><td class="num">${S.pet.spent || 0}</td></tr>
+        <tr><td>🎁 兌換獎勵</td><td class="num">—</td><td class="num">${rewardWeek}</td><td class="num">${rewardAll}</td></tr>
+        <tr><td>🛡️ 保護卡</td><td class="num">${ensureDay().shieldSpent || 0}</td><td class="num">${sum('shieldSpent')}</td><td class="num">${S.shieldSpent || 0}</td></tr>
+      </table>
+      <p class="small muted">目前剩 ${S.coins} 金幣。小雞成長 ${S.pet.grow} / ${PET_STAGES[PET_STAGES.length - 1].at}（${PET_STAGES[petStage(S.pet)].name}）。</p>
+      <div class="row wrap">
+        <span>小雞每天最多花</span>
+        <input id="petlim" type="tel" value="${S.petDailyLimit || ''}" placeholder="不限制" style="width:100px">
+        <span>金幣</span>
+        <button class="btn-sm" onclick="setPetLimit()">儲存</button>
+      </div>
+      <p class="small muted">留空或 0 ＝ 不限制。小雞照顧、商店、改名都算在內。</p>
+    </div>`;
+}
+function setPetLimit() {
+  const v = parseInt(document.getElementById('petlim').value, 10);
+  S.petDailyLimit = v > 0 ? v : 0;
+  save();
+  toast(S.petDailyLimit ? `小雞每天最多花 ${S.petDailyLimit} 金幣` : '小雞花費不限制');
+  parentPage();
+}
+
 function petCareHtml(free) {
   return `<div class="pet-grid">${PET_CARE.map(c => {
     const fx = [c.food && `🍗+${c.food}`, c.happy && `😊+${c.happy}`, c.clean && `🫧+${c.clean}`, `🌱+${c.grow}`].filter(Boolean).join(' ');
@@ -208,17 +289,32 @@ function petShopHtml(slot, free) {
 }
 
 // ───────── 動作 ─────────
+// 花在小雞身上的金幣：受家長設定的每日上限限制，並記錄起來給家長頁統計
 function petSpend(cost, what) {
+  const d = ensureDay();
+  const limit = S.petDailyLimit || 0;
+  if (limit && (d.petSpent || 0) + cost > limit) { toast(`今天花在小雞的金幣已達爸媽設定的上限 ${limit} 個`); return false; }
   if (spendable() < cost) { toast('金幣不夠喔'); return false; }
   if (cost >= 100 && !confirm(`用 ${cost} 金幣買「${what}」嗎？`)) return false;
   S.coins -= cost;
+  d.petSpent = (d.petSpent || 0) + cost;
+  S.pet.spent = (S.pet.spent || 0) + cost;
   return true;
+}
+// 答對題目時由 app.js 呼叫
+function petLearn() {
+  petTick();
+  const p = S.pet;
+  for (const k of ['food', 'happy', 'clean']) if (p[k] < PET_LEARN.floor) p[k] = Math.min(PET_LEARN.floor, p[k] + PET_LEARN.per);
+  petGrow(PET_LEARN.grow);
 }
 function petGrow(n) {
   const p = S.pet;
   const before = petStage(p);
   const got = p.food < 20 ? Math.ceil(n / 2) : n; // 太餓長得慢
   p.grow += got;
+  const d = ensureDay();
+  d.petGrow = (d.petGrow || 0) + got;
   const after = petStage(p);
   if (after > before) {
     setTimeout(() => { burst('🎉', 20); toast(`🎊 ${p.name} 長大了！變成「${PET_STAGES[after].name}」`); }, 300);
@@ -254,7 +350,7 @@ function petRename() {
   if (cost && spendable() < cost) { toast('金幣不夠喔'); return; }
   const name = (prompt(`幫小雞取新名字（最多 8 個字）${cost ? `，要花 ${cost} 金幣` : ''}：`, p.name) || '').trim().slice(0, 8);
   if (!name || name === p.name) return;
-  if (cost) S.coins -= cost;
+  if (cost && !petSpend(cost, '改名')) return;
   p.name = name; p.renamed++;
   save();
   toast(`小雞的新名字是「${name}」！`);
@@ -311,6 +407,17 @@ function petShopTap(slot, id) {
   .pi-bg { width: 56px; height: 40px; border-radius: 10px; }
   .pi-cost { font-size: 14px; font-weight: 700; color: #a76a00; }
   .pi-cost.owned { color: var(--ok); }
+  .pet-road { display: flex; align-items: stretch; gap: 4px; overflow-x: auto; padding: 8px 2px 4px; -webkit-overflow-scrolling: touch; }
+  .road-step { flex: none; width: 112px; display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; padding: 10px 6px; border-radius: 16px; background: var(--bg); border: 3px solid transparent; }
+  .road-step b { font-size: 15px; }
+  .road-step .small { font-size: 12px; line-height: 1.3; }
+  .road-step.now { border-color: var(--brand); background: var(--brand-soft); }
+  .road-step.next .road-emoji { opacity: .55; }
+  .road-step.done { opacity: .75; }
+  .road-emoji { font-size: 44px; line-height: 1.1; display: inline-block; }
+  .road-tag { margin-top: auto; font-size: 13px; font-weight: 800; color: var(--brand-dark); }
+  .road-step.done .road-tag { color: var(--ok); }
+  .road-arrow { align-self: center; color: var(--muted); flex: none; }
   `;
   const s = document.createElement('style');
   s.textContent = css;
