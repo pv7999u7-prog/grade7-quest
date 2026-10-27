@@ -10,21 +10,23 @@ const OLD_KEYS = ['social-quest-v1', 'science-quest-v1']; // 舊的社會闖關�
 const CHALLENGE_SIZE = 10;       // 每科挑戰題數
 const TASK_COINS = 10;           // 每完成一項每日任務
 const CHEST_COINS = 30;          // 四項任務全完成的每日寶箱
+const DAILY_CAP = 100;           // 每天最多拿到的金幣（自動發的全部都算，家長手動加的不算）
 const WEEK_GOAL = 5;             // 一週打卡幾天可以開週寶箱
 const WEEK_COINS = 100;
 const MILESTONES = [[3, 30], [7, 80], [14, 150], [30, 300], [60, 500], [100, 1000]]; // 連續天數里程碑 → 金幣
-const SHIELD_COST = 120;         // 連續保護卡：漏掉一天也不會斷
+const SHIELD_COST = 200;         // 連續保護卡：漏掉一天也不會斷
 const SHIELD_MAX = 2;
 const NOTE_SECONDS = 20;         // 重點筆記至少要讀幾秒才能按「讀完了」
 const NOTE_XP = 15;
 const REVIEW_STEPS = [1, 3, 7];  // 錯題：答錯隔 1 天，之後答對隔 3 天、7 天，再答對就畢業
 const DEFAULT_REWARDS = [
-  { icon: '📱', name: '多玩 30 分鐘平板', cost: 150 },
-  { icon: '🍦', name: '一份喜歡的點心', cost: 200 },
-  { icon: '🍽️', name: '決定一次晚餐吃什麼', cost: 300 },
-  { icon: '🎬', name: '週末電影之夜', cost: 500 },
-  { icon: '🎁', name: '小禮物（爸媽決定）', cost: 800 },
+  { icon: '📱', name: '多玩 30 分鐘平板', cost: 450 },
+  { icon: '🍦', name: '一份喜歡的點心', cost: 350 },
+  { icon: '🍽️', name: '決定一次晚餐吃什麼', cost: 600 },
+  { icon: '🎬', name: '週末電影之夜', cost: 900 },
+  { icon: '🎁', name: '小禮物（爸媽決定）', cost: 1500 },
 ];
+const OLD_REWARD_COSTS = { '多玩 30 分鐘平板': 150, '一份喜歡的點心': 200, '決定一次晚餐吃什麼': 300, '週末電影之夜': 500, '小禮物（爸媽決定）': 800 };
 const TITLES = ['見習探險家', '用功小學徒', '知識獵人', '地圖達人', '時光旅人', '細胞偵探', '社會小博士', '自然小博士', '學霸', '闖關王'];
 const AVATARS = ['🐣', '🐥', '🦊', '🐼', '🦉', '🐯', '🦁', '🐲', '🦄', '👑'];
 
@@ -63,7 +65,8 @@ function freshState() {
     weeks: {},      // 週一日期 → { days: [打卡日], claimed }
     notesRead: {},  // 章節 key → 最後讀完的日期
     rewards: DEFAULT_REWARDS.map(r => ({ ...r })),
-    redeems: [],    // 兌換紀錄
+    rewardsVer: 2,
+    redeems: [],    // 兌換紀錄：孩子申請（paid: false）→ 家長按兌換才扣金幣（done: true）
   };
 }
 // 把舊的社會闖關王、自然闖關王進度合併進來
@@ -91,11 +94,22 @@ function migrateOld(s) {
   }
   return found;
 }
+// 舊版存檔：預設獎品改成新價格（家長自己改過的不動）；舊兌換紀錄當時已扣過金幣
+function upgradeRewards(s) {
+  if ((s.rewardsVer || 1) >= 2) return s;
+  for (const r of s.rewards || []) {
+    const d = DEFAULT_REWARDS.find(x => x.name === r.name);
+    if (d && OLD_REWARD_COSTS[r.name] === r.cost) r.cost = d.cost;
+  }
+  for (const r of s.redeems || []) if (!('paid' in r)) r.paid = true;
+  s.rewardsVer = 2;
+  return s;
+}
 let migratedNow = false;
 function load() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) return Object.assign(freshState(), JSON.parse(raw));
+    if (raw) return Object.assign(freshState(), upgradeRewards(JSON.parse(raw)));
     const s = freshState();
     migratedNow = migrateOld(s);
     return s;
@@ -144,6 +158,15 @@ function burst(emoji = '⭐', n = 14) {
   }
 }
 const rec = id => (S.q[id] ||= { n: 0, r: 0, w: 0, box: 0, due: null, book: false });
+// 發金幣：受每日上限限制，回傳實際拿到的數量
+function earn(n) {
+  const d = ensureDay();
+  const got = Math.max(0, Math.min(n, DAILY_CAP - (d.earned || 0)));
+  d.earned = (d.earned || 0) + got;
+  S.coins += got;
+  if (got < n && !d.capNoticed) { d.capNoticed = true; toast(`🪙 今天的金幣已達上限 ${DAILY_CAP} 個，明天再來！`); }
+  return got;
+}
 const chTitle = c => `${SUBJ[c.s].name} ${c.label} ${c.name}`;
 const chipOf = q => {
   const c = chOf(q);
@@ -180,8 +203,9 @@ function markStreakDay() {
   if (!w.days.includes(t)) w.days.push(t);
   for (const [n, c] of MILESTONES) {
     if (S.streak >= n && S.lastMilestone < n) {
-      S.lastMilestone = n; S.coins += c;
-      toast(`🔥 連續 ${n} 天達成！獎勵 ${c} 金幣`);
+      S.lastMilestone = n;
+      const got = earn(c);
+      toast(`🔥 連續 ${n} 天達成！${got ? `獎勵 ${got} 金幣` : '（今天金幣已達上限）'}`);
       burst('🔥', 16);
     }
   }
@@ -250,8 +274,8 @@ function payTasks() {
   for (const t of tasks()) {
     if (t.done && !d.paid[t.id]) {
       d.paid[t.id] = true;
-      S.coins += TASK_COINS;
-      toast(`✅ 任務完成：${t.name}　+${TASK_COINS} 金幣`);
+      const got = earn(TASK_COINS);
+      toast(`✅ 任務完成：${t.name}${got ? `　+${got} 金幣` : ''}`);
     }
   }
   save();
@@ -268,7 +292,7 @@ function home() {
   const wk = thisWeek();
   const ws = weekStart(today());
   const nm = nextMilestone();
-  const pending = S.redeems.filter(r => !r.done).length;
+  const pending = pendingReqs().length;
   app.innerHTML = `
     <div class="card hero">
       <div class="avatar">${avatarOf(L.lv)}</div>
@@ -285,7 +309,7 @@ function home() {
     </div>
 
     <div class="card" style="margin-top:14px">
-      <div class="row between"><h2>📋 今日任務</h2><span class="small muted">${shortDate(today())}・每項 +${TASK_COINS} 🪙</span></div>
+      <div class="row between"><h2>📋 今日任務</h2><span class="small muted">${shortDate(today())}・今日 🪙 ${d.earned || 0}/${DAILY_CAP}</span></div>
       ${ts.map(t => `
         <div class="task">
           <div class="check ${t.done ? 'on' : ''}">${t.done ? '✓' : t.icon}</div>
@@ -327,20 +351,20 @@ function openChest() {
   const d = ensureDay();
   if (d.chest) return;
   d.chest = true;
-  S.coins += CHEST_COINS;
+  const got = earn(CHEST_COINS);
   save();
   burst('🪙', 18);
-  toast(`寶箱打開了！獲得 ${CHEST_COINS} 金幣`);
+  toast(got ? `寶箱打開了！獲得 ${got} 金幣` : '寶箱打開了！（今天金幣已達上限）');
   home();
 }
 function claimWeek() {
   const w = S.weeks[weekStart(today())];
   if (!w || w.claimed || w.days.length < WEEK_GOAL) return;
   w.claimed = true;
-  S.coins += WEEK_COINS;
+  const got = earn(WEEK_COINS);
   save();
   burst('🏆', 20);
-  toast(`週寶箱！獲得 ${WEEK_COINS} 金幣`);
+  toast(got ? `週寶箱！獲得 ${got} 金幣` : '週寶箱打開了！（今天金幣已達上限）');
   home();
 }
 
@@ -495,7 +519,7 @@ function nextQ() {
 
 function quitSession() {
   if (sess.i > 0 && !confirm('確定要離開嗎？已經作答的題目會保留紀錄，但這一回不會算完成。')) return;
-  S.xp += sess.xp; S.coins += sess.coins; save();
+  S.xp += sess.xp; earn(sess.coins); save();
   sess = null;
   home();
 }
@@ -512,7 +536,8 @@ function finishSession() {
   } else if (sess.mode === 'review') d.review = true;
   else d.practice = true;
   const lvBefore = levelOf(S.xp).lv;
-  S.xp += sess.xp; S.coins += sess.coins;
+  S.xp += sess.xp;
+  sess.coins = earn(sess.coins);
   const lvAfter = levelOf(S.xp).lv;
   save();
   payTasks();
@@ -679,46 +704,51 @@ function bookPage() {
 }
 
 // ───────── 畫面：獎勵商店 ─────────
+// 孩子在這裡「申請兌換」，金幣先保留；爸媽在家長頁按「兌換」才真的扣金幣
+const pendingReqs = () => S.redeems.filter(r => !r.done && !r.paid);
+const reserved = () => pendingReqs().reduce((a, r) => a + r.cost, 0);
+const spendable = () => S.coins - reserved();
 function shopPage() {
+  const free = spendable();
   app.innerHTML = `
     <div class="top-bar"><button class="back" onclick="home()">← 首頁</button><h2>🎁 獎勵商店</h2></div>
     <div class="card center"><div class="small muted">我的金幣</div><div class="coin-big">🪙 ${S.coins}</div>
-      <div class="small muted">答對 1 題 +1、每項任務 +${TASK_COINS}、每日寶箱 +${CHEST_COINS}、週寶箱 +${WEEK_COINS}、連續天數里程碑還有大獎！</div></div>
+      ${reserved() ? `<div class="small pending">其中 ${reserved()} 個保留給申請中的獎勵，還能用 ${free} 個</div>` : ''}
+      <div class="small muted">答對 1 題 +1、每項任務 +${TASK_COINS}、每日寶箱 +${CHEST_COINS}、週寶箱和連續天數里程碑還有加碼。<b>每天最多拿 ${DAILY_CAP} 個金幣。</b></div></div>
     <div class="card">
       <h3>🎁 兌換獎勵</h3>
-      <p class="small muted">兌換後拿給爸媽看，爸媽會在家長頁幫你標記「已兌現」。</p>
+      <p class="small muted">按「申請兌換」後拿給爸媽看，爸媽在家長頁按「兌換」就完成了。</p>
       ${S.rewards.length ? S.rewards.map((r, i) => `
         <div class="shop-row">
           <span class="shop-ico">${esc(r.icon || '🎁')}</span>
           <div class="task-main"><div class="task-name">${esc(r.name)}</div><div class="small muted">🪙 ${r.cost}</div></div>
-          <button class="go-btn" onclick="redeem(${i})" ${S.coins >= r.cost ? '' : 'disabled'}>${S.coins >= r.cost ? '兌換' : `差 ${r.cost - S.coins}`}</button>
+          <button class="go-btn" onclick="requestRedeem(${i})" ${free >= r.cost ? '' : 'disabled'}>${free >= r.cost ? '申請兌換' : `差 ${r.cost - free}`}</button>
         </div>`).join('') : '<p class="muted">爸媽還沒有設定獎勵。</p>'}
     </div>
     <div class="card">
       <h3>🛡️ 連續保護卡</h3>
       <p class="small muted">哪天忘了打卡，保護卡會自動幫你保住連續天數（最多同時擁有 ${SHIELD_MAX} 張）。目前有 ${S.shields} 張。</p>
-      <button class="go-btn" onclick="buyShield()" ${S.coins >= SHIELD_COST && S.shields < SHIELD_MAX ? '' : 'disabled'}>🪙 ${SHIELD_COST} 購買</button>
+      <button class="go-btn" onclick="buyShield()" ${free >= SHIELD_COST && S.shields < SHIELD_MAX ? '' : 'disabled'}>🪙 ${SHIELD_COST} 購買</button>
     </div>
     ${S.redeems.length ? `
       <div class="card">
         <h3>📜 兌換紀錄</h3>
         ${S.redeems.slice(0, 15).map(r => `<div class="bk row between"><span>${esc(r.name)}<span class="small muted">　${shortDate(r.date)}・🪙 ${r.cost}</span></span>
-          <span class="small ${r.done ? '' : 'pending'}">${r.done ? '✓ 已兌現' : '等爸媽兌現'}</span></div>`).join('')}
+          <span class="small ${r.done ? '' : 'pending'}">${r.done ? '✓ 已兌換' : '等爸媽兌換'}</span></div>`).join('')}
       </div>` : ''}`;
 }
-function redeem(i) {
+function requestRedeem(i) {
   const r = S.rewards[i];
-  if (!r || S.coins < r.cost) return;
-  if (!confirm(`用 ${r.cost} 金幣兌換「${r.name}」嗎？`)) return;
-  S.coins -= r.cost;
-  S.redeems.unshift({ id: Date.now(), name: r.name, cost: r.cost, date: today(), done: false });
+  if (!r || spendable() < r.cost) return;
+  if (!confirm(`申請用 ${r.cost} 金幣兌換「${r.name}」嗎？`)) return;
+  S.redeems.unshift({ id: Date.now(), name: r.name, cost: r.cost, date: today(), done: false, paid: false });
   save();
-  burst('🎁', 16);
-  toast('兌換成功！拿給爸媽看吧');
+  burst('🎁', 12);
+  toast('已送出申請！拿給爸媽看吧');
   shopPage();
 }
 function buyShield() {
-  if (S.coins < SHIELD_COST || S.shields >= SHIELD_MAX) return;
+  if (spendable() < SHIELD_COST || S.shields >= SHIELD_MAX) return;
   if (!confirm(`用 ${SHIELD_COST} 金幣買一張連續保護卡嗎？`)) return;
   S.coins -= SHIELD_COST; S.shields++;
   save();
@@ -813,18 +843,27 @@ function parentPage() {
   };
   const worst = Object.entries(S.q).filter(([id, r]) => QMAP[id] && r.w > 0)
     .sort((a, b) => b[1].w - a[1].w || (a[1].r / a[1].n) - (b[1].r / b[1].n)).slice(0, 10);
-  const pending = S.redeems.filter(r => !r.done);
+  const pending = pendingReqs();
 
   app.innerHTML = `
     <div class="top-bar"><button class="back" onclick="home()">← 首頁</button><h2>👨‍👩‍👧 家長專區</h2></div>
 
     ${pending.length ? `
       <div class="card" style="border:2px solid var(--gold)">
-        <h3>🎁 待兌現的獎勵</h3>
+        <h3>🎁 孩子申請的獎勵</h3>
         ${pending.map(r => `<div class="shop-row"><div class="task-main"><div class="task-name">${esc(r.name)}</div>
-          <div class="small muted">${shortDate(r.date)} 兌換・🪙 ${r.cost}</div></div>
-          <button class="go-btn" onclick="markRedeemed(${r.id})">已兌現</button></div>`).join('')}
+          <div class="small muted">${shortDate(r.date)} 申請・🪙 ${r.cost}</div></div>
+          <button class="btn-sm danger" onclick="cancelRedeem(${r.id})">取消</button>
+          <button class="go-btn" onclick="approveRedeem(${r.id})">兌換</button></div>`).join('')}
       </div>` : ''}
+
+    <div class="card">
+      <h3>🪙 兌換獎勵（扣金幣）</h3>
+      <p class="small muted">孩子目前有 ${S.coins} 金幣。按「兌換」會直接扣掉金幣並留下紀錄。</p>
+      ${S.rewards.map((r, i) => `<div class="shop-row"><span class="shop-ico">${esc(r.icon || '🎁')}</span>
+        <div class="task-main"><div class="task-name">${esc(r.name)}</div><div class="small muted">🪙 ${r.cost}</div></div>
+        <button class="go-btn" onclick="parentRedeem(${i})" ${S.coins >= r.cost ? '' : 'disabled'}>兌換</button></div>`).join('')}
+    </div>
 
     <div class="card">
       <h3>近 7 天答題數</h3>
@@ -923,9 +962,30 @@ function toggleRange(key, on) {
   if (on) S.range.push(key);
   save();
 }
-function markRedeemed(id) {
+function approveRedeem(id) {
   const r = S.redeems.find(x => x.id === id);
-  if (r) { r.done = true; save(); parentPage(); }
+  if (!r || r.done) return;
+  if (!r.paid) {
+    if (S.coins < r.cost) { toast('金幣不夠，無法兌換'); return; }
+    if (!confirm(`兌換「${r.name}」，扣 ${r.cost} 金幣？`)) return;
+    S.coins -= r.cost; r.paid = true;
+  }
+  r.done = true;
+  save(); toast(`已兌換「${r.name}」，剩 ${S.coins} 金幣`); parentPage();
+}
+function cancelRedeem(id) {
+  if (!confirm('取消這筆申請？（不會扣金幣）')) return;
+  S.redeems = S.redeems.filter(x => x.id !== id);
+  save(); parentPage();
+}
+function parentRedeem(i) {
+  const r = S.rewards[i];
+  if (!r) return;
+  if (S.coins < r.cost) { toast('金幣不夠，無法兌換'); return; }
+  if (!confirm(`兌換「${r.name}」，扣 ${r.cost} 金幣？`)) return;
+  S.coins -= r.cost;
+  S.redeems.unshift({ id: Date.now(), name: r.name, cost: r.cost, date: today(), done: true, paid: true });
+  save(); toast(`已兌換「${r.name}」，剩 ${S.coins} 金幣`); parentPage();
 }
 function editReward(i, field, v) {
   const r = S.rewards[i];
@@ -977,7 +1037,7 @@ function importData(input) {
       const data = JSON.parse(reader.result);
       if (!data || typeof data.q !== 'object' || typeof data.days !== 'object') throw new Error('格式不符');
       if (!confirm('匯入會覆蓋目前這台裝置上的進度，確定嗎？')) return;
-      S = Object.assign(freshState(), data); save();
+      S = Object.assign(freshState(), upgradeRewards(data)); save();
       toast('匯入完成'); parentPage();
     } catch (e) { toast('這不是有效的備份檔'); }
   };
