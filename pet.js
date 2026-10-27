@@ -14,6 +14,10 @@ const PET_STAGES = [
   { at: 3000, name: '傳說神鳥', emoji: '🦚', size: 0.58, desc: '展開閃亮的尾羽！' },
 ];
 const PET_GOAL = { date: '2027-01-10', label: '期末考前' }; // 養成目標日（顯示用）
+// 每週（週一～週日）最多成長多少：避免一直刷題或把存下的金幣一次花光就很快養成。
+// 330 × 9 週 ＝ 2970 ＜ 3000 → 從 10/26 那週開始，最快也要第 10 週（12/28 週一）才養成，約期末考（1/10）前兩週；
+// 一般節奏每週約 300，不會被卡到
+const PET_WEEK_CAP = 330;
 
 // ───────── 答題也會照顧小雞 ─────────
 // 每答對 1 題：飽足、心情、清潔各 +3（只補到 60，想更高要花金幣照顧），成長 +1
@@ -190,6 +194,7 @@ function petPage() {
         </div>
         <div class="small muted" style="margin-top:6px">點小雞可以免費摸摸頭（今天還有 ${Math.max(0, PET_PATS_PER_DAY - pats)} 次）。
           每答對 1 題，小雞成長 +${PET_LEARN.grow}，飽足、心情、清潔也會補一點（最多到 ${PET_LEARN.floor}）。肚子太餓時長得比較慢喔！</div>
+        <div class="small" style="margin-top:4px">📅 本週成長 <b>${petWeekGrow()} / ${PET_WEEK_CAP}</b>${petWeekGrow() >= PET_WEEK_CAP ? '（已滿，下週一再長大；照顧仍會讓小雞開心）' : ''}</div>
         ${S.petDailyLimit ? `<div class="small muted">爸媽設定：每天最多花 ${S.petDailyLimit} 金幣在小雞身上（今天已花 ${ensureDay().petSpent || 0}）</div>` : ''}
       </div>
     </div>
@@ -207,7 +212,7 @@ function petRoadmapHtml() {
   const t = today();
   const recent = Array.from({ length: 7 }, (_, i) => S.days[addDays(t, -i)]?.petGrow || 0);
   const active = recent.filter(v => v > 0).length;
-  const perDay = active ? recent.reduce((a, b) => a + b, 0) / active : 0; // 只平均有玩的天數
+  const perDay = active ? Math.min(recent.reduce((a, b) => a + b, 0) / active, PET_WEEK_CAP / 7) : 0; // 只平均有玩的天數，且不超過每週上限
   const left = Math.max(0, last.at - p.grow);
   let eta = '';
   if (si === PET_STAGES.length - 1) eta = `🎉 已經養成「${last.name}」了，太厲害了！`;
@@ -251,7 +256,7 @@ function coinFlowHtml() {
         <tr><td>🎁 兌換獎勵</td><td class="num">—</td><td class="num">${rewardWeek}</td><td class="num">${rewardAll}</td></tr>
         <tr><td>🛡️ 保護卡</td><td class="num">${ensureDay().shieldSpent || 0}</td><td class="num">${sum('shieldSpent')}</td><td class="num">${S.shieldSpent || 0}</td></tr>
       </table>
-      <p class="small muted">目前剩 ${S.coins} 金幣。小雞成長 ${S.pet.grow} / ${PET_STAGES[PET_STAGES.length - 1].at}（${PET_STAGES[petStage(S.pet)].name}）。</p>
+      <p class="small muted">目前剩 ${S.coins} 金幣。小雞成長 ${S.pet.grow} / ${PET_STAGES[PET_STAGES.length - 1].at}（${PET_STAGES[petStage(S.pet)].name}），本週 ${petWeekGrow()} / ${PET_WEEK_CAP}。</p>
       <div class="row wrap">
         <span>小雞每天最多花</span>
         <input id="petlim" type="tel" value="${S.petDailyLimit || ''}" placeholder="不限制" style="width:100px">
@@ -270,7 +275,9 @@ function setPetLimit() {
 }
 
 function petCareHtml(free) {
-  return `<div class="pet-grid">${PET_CARE.map(c => {
+  const full = petWeekGrow() >= PET_WEEK_CAP;
+  return `${full ? '<p class="small pending">本週成長已滿 🌙 現在照顧只會讓小雞開心，不會長大，下週一再一起努力！</p>' : ''}
+    <div class="pet-grid">${PET_CARE.map(c => {
     const fx = [c.food && `🍗+${c.food}`, c.happy && `😊+${c.happy}`, c.clean && `🫧+${c.clean}`, `🌱+${c.grow}`].filter(Boolean).join(' ');
     return `<button class="pet-item" onclick="petCare('${c.id}')" ${free >= c.cost ? '' : 'disabled'}>
       <span class="pi-ico">${c.icon}</span><b>${c.name}</b><span class="small muted">${fx}</span><span class="pi-cost">🪙 ${c.cost}</span></button>`;
@@ -309,12 +316,19 @@ function petLearn() {
   for (const k of ['food', 'happy', 'clean']) if (p[k] < PET_LEARN.floor) p[k] = Math.min(PET_LEARN.floor, p[k] + PET_LEARN.per);
   petGrow(PET_LEARN.grow);
 }
+// 這週（週一開始）已經成長多少
+function petWeekGrow() {
+  const ws = weekStart(today());
+  return Array.from({ length: 7 }, (_, i) => S.days[addDays(ws, i)]?.petGrow || 0).reduce((a, b) => a + b, 0);
+}
 function petGrow(n) {
   const p = S.pet;
   const before = petStage(p);
-  const got = p.food < 20 ? Math.ceil(n / 2) : n; // 太餓長得慢
-  p.grow += got;
   const d = ensureDay();
+  const room = Math.max(0, PET_WEEK_CAP - petWeekGrow());
+  const got = Math.min(room, p.food < 20 ? Math.ceil(n / 2) : n); // 太餓長得慢；每週有上限
+  if (got < n && !d.petCapNoticed && room === 0) { d.petCapNoticed = true; toast(`🌙 ${p.name} 這週已經長很多了，下週一再繼續長大！（照顧還是能讓牠開心喔）`); }
+  p.grow += got;
   d.petGrow = (d.petGrow || 0) + got;
   const after = petStage(p);
   if (after > before) {
@@ -325,13 +339,15 @@ function petGrow(n) {
 function petCare(id) {
   const c = PET_CARE.find(x => x.id === id);
   petTick();
-  if (!c || !petSpend(c.cost, c.name)) return;
+  if (!c) return;
+  if (petWeekGrow() >= PET_WEEK_CAP && !confirm(`本週成長已經滿了，這次「${c.name}」只會讓小雞的狀態變好，不會長大。還要花 ${c.cost} 金幣嗎？`)) return;
+  if (!petSpend(c.cost, c.name)) return;
   const p = S.pet;
   for (const k of ['food', 'happy', 'clean']) if (c[k]) p[k] = Math.min(100, p[k] + c[k]);
   const got = petGrow(c.grow);
   save();
   burst(c.icon, 8);
-  toast(`${c.icon} ${p.name}：謝謝你！成長 +${got}`);
+  toast(`${c.icon} ${p.name}：謝謝你！${got ? `成長 +${got}` : '（本週成長已滿，但我很開心！）'}`);
   petPage();
 }
 function petPat() {
