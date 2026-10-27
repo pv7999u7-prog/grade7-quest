@@ -66,6 +66,7 @@ function freshState() {
     notesRead: {},  // 章節 key → 最後讀完的日期
     rewards: DEFAULT_REWARDS.map(r => ({ ...r })),
     rewardsVer: 2,
+    pet: newPet(),  // 小雞養成（pet.js）
     redeems: [],    // 兌換紀錄：孩子申請（paid: false）→ 家長按兌換才扣金幣（done: true）
   };
 }
@@ -295,7 +296,7 @@ function home() {
   const pending = pendingReqs().length;
   app.innerHTML = `
     <div class="card hero">
-      <div class="avatar">${avatarOf(L.lv)}</div>
+      <button class="avatar pet-mini" onclick="go(petPage)" aria-label="我的小雞">${petMini()}</button>
       <div class="hero-main">
         <div class="title-line">Lv.${L.lv} ${titleOf(L.lv)}</div>
         <div class="xpbar"><div style="width:${(L.cur / L.need * 100).toFixed(1)}%"></div></div>
