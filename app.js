@@ -30,6 +30,7 @@ const OLD_REWARD_COSTS = { '多玩 30 分鐘平板': 150, '一份喜歡的點心
 const TITLES = ['見習探險家', '用功小學徒', '知識獵人', '地圖達人', '時光旅人', '細胞偵探', '社會小博士', '自然小博士', '學霸', '闖關王'];
 const AVATARS = ['🐣', '🐥', '🦊', '🐼', '🦉', '🐯', '🦁', '🐲', '🦄', '👑'];
 
+BANK.forEach(q => { if (q.gen) Object.assign(q, q.gen()); }); // 隨機數字題先產生一個範例，給錯題本等畫面顯示
 const QMAP = Object.fromEntries(BANK.map(q => [q.id, q]));
 const CH = Object.fromEntries(CHAPTERS.map(c => [c.key, c]));
 const chOf = q => CH[`${q.s}-${q.ch}`];
@@ -224,12 +225,50 @@ const bookList = () => Object.keys(S.q).filter(id => QMAP[id] && S.q[id].book);
 const isMastered = id => { const r = S.q[id]; return r && r.r >= 2 && !r.book; };
 const chMastery = key => { const qs = BANK.filter(q => `${q.s}-${q.ch}` === key); return qs.length ? qs.filter(q => isMastered(q.id)).length / qs.length : 0; };
 
-// 新題優先，其次是正確率低的題目
-function pickWeighted(pool, n, exclude = []) {
-  return pool.filter(q => !exclude.includes(q.id)).map(q => {
+// 沒寫過的題目優先；寫過的依「多久沒寫」和正確率排序，最近寫過的往後排，避免每天刷到一樣的題目
+const daysSince = key => key ? Math.round((new Date(today()) - new Date(key)) / 86400000) : 999;
+function pickWeighted(pool, n, exclude = [], lvl = 1) {
+  const sorted = pool.filter(q => !exclude.includes(q.id)).map(q => {
     const r = S.q[q.id];
-    return { q, score: (!r || !r.n) ? Math.random() * 0.3 : (r.r / r.n) + Math.random() * 0.6 };
-  }).sort((a, b) => a.score - b.score).slice(0, n).map(x => x.q);
+    const qlv = q.lv || 1;
+    const adj = qlv > lvl ? 3 : lvl >= 2 && qlv === 2 ? -0.4 : 0; // 進階題：基礎時幾乎不出、進階以上優先
+    if (!r || !r.n) return { q, score: Math.random() * 0.3 + adj };
+    const ago = daysSince(r.last);
+    const recent = ago <= 1 ? 2 : ago <= 3 ? 1.2 : ago <= 7 ? 0.6 : 0;
+    return { q, score: 0.4 + recent + (r.r / r.n) * 0.5 + Math.random() * 0.5 + (q.gen ? 0 : Math.min(r.n, 6) * 0.03) + adj };
+  }).sort((a, b) => a.score - b.score);
+  // 進階題有上限，其他題（例如手寫生字）照常出：★★ 最多 3 成、★★★ 最多 5 成
+  const cap = lvl >= 3 ? Math.ceil(n * 0.5) : lvl === 2 ? Math.ceil(n * 0.3) : 0;
+  const out = [];
+  let adv = 0;
+  for (const x of sorted) {
+    if (out.length >= n) break;
+    const isAdv = (x.q.lv || 1) >= 2;
+    if (isAdv && adv >= cap) continue;
+    if (isAdv) adv++;
+    out.push(x.q);
+  }
+  for (const x of sorted) { if (out.length >= n) break; if (!out.includes(x.q)) out.push(x.q); } // 題目不夠時再補
+  return out;
+}
+// ───────── 難度：看最近 7 天這一科的答對率 ─────────
+// 1 基礎（答對率 < 70% 或題數太少）、2 進階混合（≥ 70%）、3 挑戰（≥ 85%）
+const LEVEL_NAMES = ['', '基礎', '進階', '挑戰'];
+function diffStat(g) {
+  let n = 0, r = 0;
+  for (let i = 0; i < 7; i++) { const x = S.days[addDays(today(), -i)]?.gs?.[g]; if (x) { n += x[0]; r += x[1]; } }
+  return { n, r };
+}
+function diffLevel(g) {
+  const { n, r } = diffStat(g);
+  if (n < 15) return 1;
+  return r / n >= 0.85 ? 3 : r / n >= 0.7 ? 2 : 1;
+}
+// 隨機數字題：每次出題都重新產生數字（gen(hard) 回傳 { q, o, a, e }；難度高時出比較難的版本）
+function instQ(q, lvl = 1) {
+  if (!q.gen) return q;
+  const hard = q.gen.length > 0 && (lvl >= 3 || (lvl === 2 && Math.random() < 0.5)); // 有難版的題目才會變難
+  return Object.assign({}, q, q.gen(hard), { hard });
 }
 
 // 今天建議讀的重點：段考範圍內、最近沒讀過、精熟度最低的章節；單雙日輪流社會、自然
@@ -261,8 +300,8 @@ function tasks() {
   const d = ensureDay();
   const c = CH[d.noteKey] || CHAPTERS[0];
   return [
-    { id: 'soc', icon: '🌏', name: `社會挑戰 ${CHALLENGE_SIZE} 題`, sub: '地理・歷史・公民', done: d.soc, go: "startChallenge('soc')" },
-    { id: 'sci', icon: '🔬', name: `自然挑戰 ${CHALLENGE_SIZE} 題`, sub: '生物', done: d.sci, go: "startChallenge('sci')" },
+    { id: 'soc', icon: '🌏', name: `社會挑戰 ${CHALLENGE_SIZE} 題`, sub: `${GROUPS.soc.sub}・難度 ${'★'.repeat(diffLevel('soc'))}`, done: d.soc, go: "startChallenge('soc')" },
+    { id: 'sci', icon: '🔬', name: `自然挑戰 ${CHALLENGE_SIZE} 題`, sub: `${GROUPS.sci.sub}・難度 ${'★'.repeat(diffLevel('sci'))}`, done: d.sci, go: "startChallenge('sci')" },
     { id: 'note', icon: '📖', name: '讀一篇重點筆記', sub: `今日推薦：${chTitle(c)}`, done: d.note, go: `openNote('${c.key}')` },
     d.dueAtStart > 0
       ? { id: 'review', icon: '📕', name: '複習到期錯題', sub: `今天有 ${d.dueAtStart} 題要複習`, done: d.review || dueList().length === 0, go: 'startReview()' }
@@ -286,7 +325,7 @@ function payTasks() {
 function home() {
   stopNoteTimer();
   const d = ensureDay();
-  if (!d.rangeSet) { rangePage(true); return; }
+  if (!rangeAsked) { rangePage(true); return; }
   const L = levelOf(S.xp);
   const ts = tasks();
   const allDone = ts.every(t => t.done);
@@ -379,6 +418,9 @@ function claimWeek() {
 let sess = null;
 
 function startSession(mode, qs, label, group) {
+  qs = qs.filter(Boolean);
+  const lvl = diffLevel(group || (qs[0] ? groupOf(qs[0]) : 'soc'));
+  qs = qs.map(q => instQ(q, lvl));
   stopNoteTimer();
   if (!qs.length) { toast('沒有可以練習的題目'); return; }
   sess = { mode, label, group, qs, i: 0, correct: 0, combo: 0, maxCombo: 0, xp: 0, coins: 0, graduated: [], wrongIds: [] };
@@ -387,7 +429,7 @@ function startSession(mode, qs, label, group) {
 }
 function startChallenge(g) {
   const due = shuffle(dueList().filter(id => groupOf(QMAP[id]) === g)).slice(0, 4).map(id => QMAP[id]);
-  const rest = pickWeighted(groupPool(g), CHALLENGE_SIZE - due.length, due.map(q => q.id));
+  const rest = pickWeighted(groupPool(g), CHALLENGE_SIZE - due.length, due.map(q => q.id), diffLevel(g));
   startSession('challenge', shuffle([...due, ...rest]), `${GROUPS[g].icon} ${GROUPS[g].name}挑戰`, g);
 }
 function startReview() {
@@ -396,11 +438,11 @@ function startReview() {
 function startPractice(key) {
   if (key) {
     const qs = BANK.filter(q => `${q.s}-${q.ch}` === key);
-    startSession('practice', shuffle(pickWeighted(qs, 10)), chTitle(CH[key]));
+    startSession('practice', shuffle(pickWeighted(qs, 10, [], diffLevel(SUBJ[CH[key].s].group))), chTitle(CH[key]), SUBJ[CH[key].s].group);
   }
 }
 function startRangePractice(g) {
-  startSession('practice', shuffle(pickWeighted(groupPool(g), 10)), `${GROUPS[g].name}段考範圍綜合練習`);
+  startSession('practice', shuffle(pickWeighted(groupPool(g), 10, [], diffLevel(g))), `${GROUPS[g].name}段考範圍綜合練習`, g);
 }
 function startBookAll() {
   startSession('practice', shuffle(bookList()).slice(0, 10).map(id => QMAP[id]), '錯題練習');
@@ -418,7 +460,7 @@ function renderQ() {
       <div class="combo">${sess.combo >= 2 ? `🔥×${sess.combo}` : `${sess.i + 1}/${sess.qs.length}`}</div>
     </div>
     <div class="row wrap">${chipOf(q)}
-      ${S.q[q.id]?.book ? '<span class="chip" style="background:var(--bad)">錯題複習</span>' : ''}</div>
+      ${S.q[q.id]?.book ? '<span class="chip" style="background:var(--bad)">錯題複習</span>' : ''}${q.lv === 2 || q.hard ? '<span class="chip" style="background:#8a5cf6">⭐ 進階</span>' : ''}</div>
     <div class="question">${esc(q.q)}</div>`;
   if (q.t === 'order') {
     app.innerHTML = head + `<div class="small muted">依序點選下面的項目，點錯可以再點一次取消。</div><div id="qbody"></div>`;
@@ -479,7 +521,8 @@ function afterAnswer(q, ok, correctLine) {
   const r = rec(q.id);
   const d = ensureDay();
   const wasDue = r.book && r.due <= today();
-  r.n++; d.answered++;
+  r.n++; d.answered++; r.last = today();
+  { const x = ((d.gs ||= {})[groupOf(q)] ||= [0, 0]); x[0]++; if (ok) x[1]++; } // 給難度計算用
   let grad = false;
   if (ok) {
     r.r++; d.correct++;
@@ -574,7 +617,7 @@ function finishSession() {
     ${sess.wrongIds.length ? `
       <div class="card">
         <h3>這回答錯的題目</h3>
-        ${sess.wrongIds.map(id => { const q = QMAP[id]; return `
+        ${sess.wrongIds.map(id => { const q = sess.qs.find(x => x.id === id) || QMAP[id]; return `
           <div class="bk">${chipOf(q)} <div style="margin-top:4px">${esc(q.q)}</div>
           <div class="small" style="margin-top:4px">✔ ${esc(q.t === 'order' ? q.o.join(' → ') : q.o[q.a])}</div></div>`; }).join('')}
         ${weakCh ? `<button class="btn-sm" style="margin-top:10px" onclick="openNote('${weakCh.key}')">📖 讀「${esc(weakCh.name)}」重點</button>` : ''}
@@ -876,6 +919,7 @@ function parentPage() {
     </div>
 
     ${coinFlowHtml()}
+    ${levelHtml()}
 
     <div class="card">
       <h3>近 7 天答題數</h3>
@@ -970,6 +1014,7 @@ function setExam(n) {
   save(); toast(n ? `已設定為${EXAMS[n]}範圍` : '已設定為全部章節'); parentPage();
 }
 // ───────── 孩子自己選出題範圍 ─────────
+let rangeAsked = false; // 這次打開 App 是否已經選過範圍（App 被關掉重開就會再問）
 const groupChapters = g => CHAPTERS.filter(c => SUBJ[c.s].group === g);
 const groupRange = g => groupChapters(g).filter(c => S.range.includes(c.key));
 function rangeSummary() {
@@ -984,7 +1029,7 @@ function rangePage(daily) {
   const d = ensureDay();
   app.innerHTML = `
     <div class="top-bar">${daily ? '' : '<button class="back" onclick="home()">← 首頁</button>'}<h2>🎯 今天要練哪些章節？</h2></div>
-    <p class="small muted">勾選要出題的章節，挑戰題和每日推薦的重點筆記都會從這裡出。${daily ? '每天第一次打開會問一次，之後在首頁也能改。' : ''}</p>
+    <p class="small muted">勾選要出題的章節，挑戰題和每日推薦的重點筆記都會從這裡出。${daily ? '每次打開 App 都會問一次，之後在首頁也能改。' : ''}</p>
     ${Object.entries(GROUPS).map(([g, info]) => `
       <div class="card">
         <div class="row between wrap"><h3>${info.icon} ${info.name}</h3><span class="small muted">已選 ${groupRange(g).length} / ${groupChapters(g).length}</span></div>
@@ -997,6 +1042,14 @@ function rangePage(daily) {
     <button class="big-btn green" onclick="confirmRange()">✓ 就練這些！</button>
     <div style="height:20px"></div>`;
 }
+function levelHtml() {
+  return `
+    <div class="card">
+      <h3>📈 自動難度</h3>
+      ${Object.entries(GROUPS).map(([g, info]) => { const { n, r } = diffStat(g); const L = diffLevel(g); return `<div class="row between" style="margin:6px 0"><span>${info.icon} ${info.name}</span><span><b>${'★'.repeat(L)}${'☆'.repeat(3 - L)} ${LEVEL_NAMES[L]}</b>　<span class="small muted">近 7 天 ${n} 題、答對 ${n ? Math.round(r / n * 100) : 0}%</span></span></div>`; }).join('')}
+      <p class="small muted">近 7 天寫滿 15 題後開始調整：答對率 70% 以上會混入「⭐ 進階」題、數學數字變大或多一步；85% 以上以進階題為主。答對率掉下來就自動降回基礎。</p>
+    </div>`;
+}
 function setGroupExam(g, n, daily) {
   S.range = S.range.filter(k => SUBJ[CH[k].s].group !== g).concat(groupChapters(g).filter(c => !n || c.exam === n).map(c => c.key));
   save();
@@ -1006,7 +1059,7 @@ function confirmRange() {
   const empty = Object.keys(GROUPS).find(g => !groupRange(g).length);
   if (empty) { toast(`${GROUPS[empty].name}至少要選一個章節喔`); return; }
   const d = ensureDay();
-  d.rangeSet = true;
+  rangeAsked = true;
   if (!d.note) d.noteKey = suggestNote(); // 範圍改了，今天推薦的筆記也跟著換
   save();
   home();

@@ -1,7 +1,7 @@
 // 離線快取：更新題庫或程式後，把 VERSION 改一下，iPad 下次連網開啟時就會換成新版
 // 同一個網域上可能還有其他 App，快取只清自己（PREFIX 開頭）的舊版本
 const PREFIX = 'g7q-';
-const VERSION = PREFIX + 'v8';
+const VERSION = PREFIX + 'v9';
 const FILES = ['./', 'index.html', 'app.js', 'chapters.js', 'questions.js', 'pet.js', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {

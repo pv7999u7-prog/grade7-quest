@@ -11,8 +11,8 @@ const SUBJ = {
 };
 
 const GROUPS = {
-  soc: { name: '社會', icon: '🌏', subjects: ['geo', 'his', 'civ'] },
-  sci: { name: '自然', icon: '🔬', subjects: ['bio'] },
+  soc: { name: '社會', icon: '🌏', sub: '地理・歷史・公民', subjects: ['geo', 'his', 'civ'] },
+  sci: { name: '自然', icon: '🔬', sub: '生物', subjects: ['bio'] },
 };
 
 const EXAMS = ['', '第一次段考', '第二次段考', '第三次段考'];
