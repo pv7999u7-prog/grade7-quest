@@ -286,6 +286,7 @@ function payTasks() {
 function home() {
   stopNoteTimer();
   const d = ensureDay();
+  if (!d.rangeSet) { rangePage(true); return; }
   const L = levelOf(S.xp);
   const ts = tasks();
   const allDone = ts.every(t => t.done);
@@ -322,6 +323,11 @@ function home() {
           : allDone ? `<div class="rest">🎉 今天的任務全部完成！好好休息，明天見～</div>`
           : `<div class="small muted center">社會＋自然挑戰都完成就算打卡 🔥；四項全做完可以開寶箱 🎁</div>`}
       </div>
+    </div>
+
+    <div class="card range-card" onclick="go(() => rangePage(false))">
+      <div class="row between"><h3>🎯 練習範圍</h3><button class="btn-sm">更改</button></div>
+      <div class="small" style="margin-top:6px">${rangeSummary()}</div>
     </div>
 
     <div class="card">
@@ -962,6 +968,49 @@ function thisWeekDone(k) { const w = S.weeks[weekStart(k)]; return !!(w && w.day
 function setExam(n) {
   S.range = CHAPTERS.filter(c => !n || c.exam === n).map(c => c.key);
   save(); toast(n ? `已設定為${EXAMS[n]}範圍` : '已設定為全部章節'); parentPage();
+}
+// ───────── 孩子自己選出題範圍 ─────────
+const groupChapters = g => CHAPTERS.filter(c => SUBJ[c.s].group === g);
+const groupRange = g => groupChapters(g).filter(c => S.range.includes(c.key));
+function rangeSummary() {
+  return Object.entries(GROUPS).map(([g, info]) => {
+    const r = groupRange(g);
+    const lab = c => (info.subjects.length > 1 ? SUBJ[c.s].name : '') + c.label; // 社會有地理、歷史、公民，要標出科目
+    const names = r.length > 4 ? `${r.slice(0, 4).map(lab).join('、')}…共 ${r.length} 個` : r.map(lab).join('、') || '（還沒選）';
+    return `${info.icon} <b>${info.name}</b>：${esc(names)}`;
+  }).join('<br>');
+}
+function rangePage(daily) {
+  const d = ensureDay();
+  app.innerHTML = `
+    <div class="top-bar">${daily ? '' : '<button class="back" onclick="home()">← 首頁</button>'}<h2>🎯 今天要練哪些章節？</h2></div>
+    <p class="small muted">勾選要出題的章節，挑戰題和每日推薦的重點筆記都會從這裡出。${daily ? '每天第一次打開會問一次，之後在首頁也能改。' : ''}</p>
+    ${Object.entries(GROUPS).map(([g, info]) => `
+      <div class="card">
+        <div class="row between wrap"><h3>${info.icon} ${info.name}</h3><span class="small muted">已選 ${groupRange(g).length} / ${groupChapters(g).length}</span></div>
+        <div class="btn-row" style="margin:8px 0">${EXAMS.map((name, n) => n ? `<button class="btn-sm" onclick="setGroupExam('${g}', ${n}, ${daily})">${name}</button>` : '').join('')}
+          <button class="btn-sm" onclick="setGroupExam('${g}', 0, ${daily})">全部</button></div>
+        ${groupChapters(g).map((c, i, a) => `${info.subjects.length > 1 && (i === 0 || a[i - 1].s !== c.s) ? `<div class="range-subj">${SUBJ[c.s].icon} ${SUBJ[c.s].name}</div>` : ''}
+          <label class="check-row"><input type="checkbox" ${S.range.includes(c.key) ? 'checked' : ''} onchange="toggleRange('${c.key}', this.checked); rangePage(${daily})">
+          ${examTag(c)} ${c.label} ${esc(c.name)}</label>`).join('')}
+      </div>`).join('')}
+    <button class="big-btn green" onclick="confirmRange()">✓ 就練這些！</button>
+    <div style="height:20px"></div>`;
+}
+function setGroupExam(g, n, daily) {
+  S.range = S.range.filter(k => SUBJ[CH[k].s].group !== g).concat(groupChapters(g).filter(c => !n || c.exam === n).map(c => c.key));
+  save();
+  rangePage(daily);
+}
+function confirmRange() {
+  const empty = Object.keys(GROUPS).find(g => !groupRange(g).length);
+  if (empty) { toast(`${GROUPS[empty].name}至少要選一個章節喔`); return; }
+  const d = ensureDay();
+  d.rangeSet = true;
+  if (!d.note) d.noteKey = suggestNote(); // 範圍改了，今天推薦的筆記也跟著換
+  save();
+  home();
+  scrollTo(0, 0);
 }
 function toggleRange(key, on) {
   S.range = S.range.filter(k => k !== key);
