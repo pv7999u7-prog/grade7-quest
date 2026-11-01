@@ -20,13 +20,14 @@ const NOTE_SECONDS = 20;         // 重點筆記至少要讀幾秒才能按「�
 const NOTE_XP = 15;
 const REVIEW_STEPS = [1, 3, 7];  // 錯題：答錯隔 1 天，之後答對隔 3 天、7 天，再答對就畢業
 const DEFAULT_REWARDS = [
-  { icon: '📱', name: '多玩 30 分鐘平板', cost: 180 },
   { icon: '🍦', name: '一份喜歡的點心', cost: 150 },
   { icon: '🍽️', name: '決定一次晚餐吃什麼', cost: 250 },
   { icon: '🎬', name: '週末電影之夜', cost: 450 },
   { icon: '🎁', name: '小禮物（爸媽決定）', cost: 600 },
 ];
 // 2026-11-01 第 3 版價格：裝備全買齊後，閒錢約 1～2 週換一個小獎勵、3～4 週以上換大獎勵
+// 2026-11-01 家長要求先拿掉「多玩 30 分鐘平板」：孩子的獎勵商店不顯示，家長專區可以一鍵加回
+const PRESET_REWARDS = [{ icon: '📱', name: '多玩 30 分鐘平板', cost: 180 }];
 const V2_REWARD_COSTS = { '多玩 30 分鐘平板': 450, '一份喜歡的點心': 350, '決定一次晚餐吃什麼': 600, '週末電影之夜': 900, '小禮物（爸媽決定）': 1500 };
 const OLD_REWARD_COSTS = { '多玩 30 分鐘平板': 150, '一份喜歡的點心': 200, '決定一次晚餐吃什麼': 300, '週末電影之夜': 500, '小禮物（爸媽決定）': 800 };
 const TITLES = ['見習探險家', '用功小學徒', '知識獵人', '地圖達人', '時光旅人', '細胞偵探', '社會小博士', '自然小博士', '學霸', '闖關王'];
@@ -68,7 +69,7 @@ function freshState() {
     weeks: {},      // 週一日期 → { days: [打卡日], claimed }
     notesRead: {},  // 章節 key → 最後讀完的日期
     rewards: DEFAULT_REWARDS.map(r => ({ ...r })),
-    rewardsVer: 3,
+    rewardsVer: 4,
     pet: newPet(),  // 小雞養成（pet.js）
     redeems: [],    // 兌換紀錄：孩子申請（paid: false）→ 家長按兌換才扣金幣（done: true）
   };
@@ -101,13 +102,14 @@ function migrateOld(s) {
 // 舊版存檔：預設獎品改成新價格（家長自己改過的不動）；舊兌換紀錄當時已扣過金幣
 function upgradeRewards(s) {
   const ver = s.rewardsVer || 1;
-  if (ver >= 3) return s;
-  for (const r of s.rewards || []) {
+  if (ver >= 4) return s;
+  if (ver < 3) for (const r of s.rewards || []) {
     const d = DEFAULT_REWARDS.find(x => x.name === r.name);
     if (d && (OLD_REWARD_COSTS[r.name] === r.cost || V2_REWARD_COSTS[r.name] === r.cost)) r.cost = d.cost;
   }
   if (ver < 2) for (const r of s.redeems || []) if (!('paid' in r)) r.paid = true;
-  s.rewardsVer = 3;
+  s.rewards = (s.rewards || []).filter(r => !PRESET_REWARDS.some(x => x.name === r.name)); // 第 4 版：先拿掉平板獎勵
+  s.rewardsVer = 4;
   return s;
 }
 let migratedNow = false;
@@ -980,6 +982,8 @@ function parentPage() {
         <input id="nr-cost" type="tel" class="cost-in" placeholder="金幣">
         <button class="btn-sm" onclick="addReward()">新增</button>
       </div>
+      ${PRESET_REWARDS.filter(x => !S.rewards.some(r => r.name === x.name)).map(x =>
+        `<div class="row wrap" style="margin-top:8px"><span class="small muted">已暫停的獎勵：</span><button class="btn-sm" onclick="addPresetReward('${esc(x.name)}')">＋ 加回 ${esc(x.icon)} ${esc(x.name)}（${x.cost} 金幣）</button></div>`).join('')}
     </div>
 
     <div class="card">
@@ -1108,6 +1112,11 @@ function editReward(i, field, v) {
 function delReward(i) {
   if (!confirm(`刪除「${S.rewards[i].name}」？`)) return;
   S.rewards.splice(i, 1); save(); parentPage();
+}
+function addPresetReward(name) {
+  const x = PRESET_REWARDS.find(r => r.name === name);
+  if (!x || S.rewards.some(r => r.name === name)) return;
+  S.rewards.push({ ...x }); save(); toast(`已加回「${name}」`); parentPage();
 }
 function addReward() {
   const name = document.getElementById('nr-name').value.trim();
