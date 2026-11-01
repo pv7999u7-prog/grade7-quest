@@ -14,18 +14,20 @@ const DAILY_CAP = 100;           // 每天最多拿到的金幣（自動發的�
 const WEEK_GOAL = 5;             // 一週打卡幾天可以開週寶箱
 const WEEK_COINS = 100;
 const MILESTONES = [[3, 30], [7, 80], [14, 150], [30, 300], [60, 500], [100, 1000]]; // 連續天數里程碑 → 金幣
-const SHIELD_COST = 200;         // 連續保護卡：漏掉一天也不會斷
+const SHIELD_COST = 150;         // 連續保護卡：漏掉一天也不會斷
 const SHIELD_MAX = 2;
 const NOTE_SECONDS = 20;         // 重點筆記至少要讀幾秒才能按「讀完了」
 const NOTE_XP = 15;
 const REVIEW_STEPS = [1, 3, 7];  // 錯題：答錯隔 1 天，之後答對隔 3 天、7 天，再答對就畢業
 const DEFAULT_REWARDS = [
-  { icon: '📱', name: '多玩 30 分鐘平板', cost: 450 },
-  { icon: '🍦', name: '一份喜歡的點心', cost: 350 },
-  { icon: '🍽️', name: '決定一次晚餐吃什麼', cost: 600 },
-  { icon: '🎬', name: '週末電影之夜', cost: 900 },
-  { icon: '🎁', name: '小禮物（爸媽決定）', cost: 1500 },
+  { icon: '📱', name: '多玩 30 分鐘平板', cost: 180 },
+  { icon: '🍦', name: '一份喜歡的點心', cost: 150 },
+  { icon: '🍽️', name: '決定一次晚餐吃什麼', cost: 250 },
+  { icon: '🎬', name: '週末電影之夜', cost: 450 },
+  { icon: '🎁', name: '小禮物（爸媽決定）', cost: 600 },
 ];
+// 2026-11-01 第 3 版價格：裝備全買齊後，閒錢約 1～2 週換一個小獎勵、3～4 週以上換大獎勵
+const V2_REWARD_COSTS = { '多玩 30 分鐘平板': 450, '一份喜歡的點心': 350, '決定一次晚餐吃什麼': 600, '週末電影之夜': 900, '小禮物（爸媽決定）': 1500 };
 const OLD_REWARD_COSTS = { '多玩 30 分鐘平板': 150, '一份喜歡的點心': 200, '決定一次晚餐吃什麼': 300, '週末電影之夜': 500, '小禮物（爸媽決定）': 800 };
 const TITLES = ['見習探險家', '用功小學徒', '知識獵人', '地圖達人', '時光旅人', '細胞偵探', '社會小博士', '自然小博士', '學霸', '闖關王'];
 const AVATARS = ['🐣', '🐥', '🦊', '🐼', '🦉', '🐯', '🦁', '🐲', '🦄', '👑'];
@@ -66,7 +68,7 @@ function freshState() {
     weeks: {},      // 週一日期 → { days: [打卡日], claimed }
     notesRead: {},  // 章節 key → 最後讀完的日期
     rewards: DEFAULT_REWARDS.map(r => ({ ...r })),
-    rewardsVer: 2,
+    rewardsVer: 3,
     pet: newPet(),  // 小雞養成（pet.js）
     redeems: [],    // 兌換紀錄：孩子申請（paid: false）→ 家長按兌換才扣金幣（done: true）
   };
@@ -98,13 +100,14 @@ function migrateOld(s) {
 }
 // 舊版存檔：預設獎品改成新價格（家長自己改過的不動）；舊兌換紀錄當時已扣過金幣
 function upgradeRewards(s) {
-  if ((s.rewardsVer || 1) >= 2) return s;
+  const ver = s.rewardsVer || 1;
+  if (ver >= 3) return s;
   for (const r of s.rewards || []) {
     const d = DEFAULT_REWARDS.find(x => x.name === r.name);
-    if (d && OLD_REWARD_COSTS[r.name] === r.cost) r.cost = d.cost;
+    if (d && (OLD_REWARD_COSTS[r.name] === r.cost || V2_REWARD_COSTS[r.name] === r.cost)) r.cost = d.cost;
   }
-  for (const r of s.redeems || []) if (!('paid' in r)) r.paid = true;
-  s.rewardsVer = 2;
+  if (ver < 2) for (const r of s.redeems || []) if (!('paid' in r)) r.paid = true;
+  s.rewardsVer = 3;
   return s;
 }
 let migratedNow = false;
