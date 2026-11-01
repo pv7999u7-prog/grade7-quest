@@ -460,7 +460,9 @@ function petSpend(cost, what) {
   const limit = S.petDailyLimit || 0;
   if (limit && (d.petSpent || 0) + cost > limit) { toast(`今天花在小雞的金幣已達爸媽設定的上限 ${limit} 個`); return false; }
   if (spendable() < cost) { toast('金幣不夠喔'); return false; }
-  if (cost >= 100 && !confirm(`用 ${cost} 金幣買「${what}」嗎？`)) return false;
+  if (!confirm(`要花 ${cost} 金幣「${what}」嗎？
+
+按「確定」才會扣金幣，按「取消」就不買。`)) return false; // 每次花金幣都先確認，避免誤觸
   S.coins -= cost;
   d.petSpent = (d.petSpent || 0) + cost;
   S.pet.spent = (S.pet.spent || 0) + cost;
